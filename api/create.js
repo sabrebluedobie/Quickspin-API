@@ -2,9 +2,16 @@
 import OpenAI from "openai";
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
-// Always set CORS headers (even on errors)
+const ALLOWED = new Set([
+  "https://bluedobiedev.com",
+  "https://www.bluedobiedev.com",
+  "https://sabrebluedobie.github.io"
+]);
+
 function setCors(res, origin) {
-  res.setHeader("Access-Control-Allow-Origin", origin || "*"); // TEMP: "*"
+  if (ALLOWED.has(origin)) {
+    res.setHeader("Access-Control-Allow-Origin", origin);
+  }
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
