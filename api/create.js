@@ -1,7 +1,12 @@
-// api/create.js  (TEMP: wide-open CORS so we can verify connectivity)
+// api/create.js
 import OpenAI from "openai";
-const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+const client =
+  process.env.OPENAI_API_KEY
+    ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+    : null;
+
+// ---- CORS allow-list ----
 const ALLOWED = new Set([
   "https://bluedobiedev.com",
   "https://www.bluedobiedev.com",
@@ -16,27 +21,83 @@ function setCors(res, origin) {
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
+// ---- Helpers ----
+function parseBody(req) {
+  try {
+    if (typeof req.body === "string") return JSON.parse(req.body || "{}");
+    if (typeof req.body === "object" && req.body) return req.body;
+  } catch (_) {}
+  return {};
+}
+
+function stubResult({ business = "", offer = "", tone = "Friendly", platform = "Facebook", keywords = "" }) {
+  return `[Short]
+Local ${business || "business"} — ${offer || "book today"}.
+
+[Medium]
+${tone} ${platform} post with keywords: ${keywords || "local, community"}
+
+[CTA]
+Book your free 30-minute consult → https://bluedobiedev.com/contact
+
+[Hashtags]
+#${(business || "local").replace(/\s+/g, "")} #SmallBusiness`;
+}
+
+// ---- Handler ----
 export default async function handler(req, res) {
-  const origin = req.headers.origin || "*";
+  const origin = req.headers.origin || "";
   setCors(res, origin);
 
   if (req.method === "OPTIONS") return res.status(204).end();
   if (req.method !== "POST") return res.status(405).json({ error: "Method not allowed" });
 
+  const { business = "", offer = "", tone = "Friendly", platform = "Facebook", keywords = "" } = parseBody(req);
+
+  // If no API key, return the stub (keeps the app usable)
+  if (!client) {
+    const text = stubResult({ business, offer, tone, platform, keywords });
+    return res.status(200).json({ result: text, note: "stub" });
+  }
+
   try {
-    const body = typeof req.body === "string" ? JSON.parse(req.body || "{}") : (req.body || {});
-    const { business = "", offer = "", tone = "Friendly", platform = "Facebook", keywords = "" } = body;
+    // System + user messages shape the output
+    const system = [
+      "You write concise, brand-safe social posts for small LOCAL businesses.",
+      "Return exactly these five labeled blocks:",
+      "[Short] (~100 chars max)",
+      "[Medium] (~220 chars max, platform-aware)",
+      "[CTA] (one line linking to https://bluedobiedev.com/contact)",
+      "[Hashtags] (3–6 simple tags, no giant blocks)",
+      "[Image Prompt] (1 short line)",
+      "No medical/financial claims. Plain, friendly language."
+    ].join("\n");
 
-    // --- keep your real OpenAI call here if you have it wired ---
-    // const completion = await client.chat.completions.create({ ... });
-    // const text = completion.choices?.[0]?.message?.content?.trim();
+    const user = [
+      `Business: ${business || "Local service"}`,
+      `Offer: ${offer || "General brand awareness"}`,
+      `Tone: ${tone}`,
+      `Platform: ${platform}`,
+      `Keywords: ${keywords || "(none)"}`
+    ].join("\n");
 
-    // Simple stub so we can confirm it works
-    const text = `[Short]\nLocal ${business || "business"} — ${offer || "book today"}.\n\n[Medium]\n${tone} ${platform} post with keywords: ${keywords}\n\n[CTA]\nBook your free 30-minute consult → https://bluedobiedev.com/contact\n\n[Hashtags]\n#${(business||"local").replace(/\s+/g,'')} #SmallBusiness`;
+    const completion = await client.chat.completions.create({
+      model: "gpt-4o-mini",
+      temperature: 0.7,
+      messages: [
+        { role: "system", content: system },
+        { role: "user", content: user }
+      ]
+    });
+
+    const text = completion.choices?.[0]?.message?.content?.trim();
+    if (!text) throw new Error("Empty model response.");
 
     return res.status(200).json({ result: text });
-  } catch (e) {
-    console.error("QuickSpin error:", e);
-    return res.status(500).json({ error: "Generation failed." });
+  } catch (err) {
+    console.error("QuickSpin OpenAI error:", err?.message || err);
+    // Graceful fallback to stub so users still get something
+    const text = stubResult({ business, offer, tone, platform, keywords });
+    return res.status(200).json({ result: text, note: "fallback" });
   }
 }
