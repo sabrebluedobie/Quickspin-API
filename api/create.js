@@ -1,12 +1,11 @@
 // api/create.js
 import OpenAI from "openai";
 
-const client =
-  process.env.OPENAI_API_KEY
-    ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
-    : null;
+const client = process.env.OPENAI_API_KEY
+  ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
+  : null;
 
-// ---- CORS allow-list ----
+// CORS allow-list
 const ALLOWED = new Set([
   "https://bluedobiedev.com",
   "https://www.bluedobiedev.com",
@@ -14,18 +13,15 @@ const ALLOWED = new Set([
 ]);
 
 function setCors(res, origin) {
-  if (ALLOWED.has(origin)) {
-    res.setHeader("Access-Control-Allow-Origin", origin);
-  }
+  if (ALLOWED.has(origin)) res.setHeader("Access-Control-Allow-Origin", origin);
   res.setHeader("Access-Control-Allow-Methods", "POST, OPTIONS");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
 }
 
-// ---- Helpers ----
 function parseBody(req) {
   try {
     if (typeof req.body === "string") return JSON.parse(req.body || "{}");
-    if (typeof req.body === "object" && req.body) return req.body;
+    if (req.body && typeof req.body === "object") return req.body;
   } catch (_) {}
   return {};
 }
@@ -41,10 +37,12 @@ ${tone} ${platform} post with keywords: ${keywords || "local, community"}
 Book your free 30-minute consult → https://bluedobiedev.com/contact
 
 [Hashtags]
-#${(business || "local").replace(/\s+/g, "")} #SmallBusiness`;
+#${(business || "local").replace(/\s+/g, "")} #SmallBusiness
+
+[Image Prompt]
+Bright, minimal photo of ${business || "local service"} at work`;
 }
 
-// ---- Handler ----
 export default async function handler(req, res) {
   const origin = req.headers.origin || "";
   setCors(res, origin);
@@ -54,14 +52,12 @@ export default async function handler(req, res) {
 
   const { business = "", offer = "", tone = "Friendly", platform = "Facebook", keywords = "" } = parseBody(req);
 
-  // If no API key, return the stub (keeps the app usable)
+  // If no key, return stub (keeps tool usable)
   if (!client) {
-    const text = stubResult({ business, offer, tone, platform, keywords });
-    return res.status(200).json({ result: text, note: "stub" });
+    return res.status(200).json({ result: stubResult({ business, offer, tone, platform, keywords }), mode: "stub-no-key" });
   }
 
   try {
-    // System + user messages shape the output
     const system = [
       "You write concise, brand-safe social posts for small LOCAL businesses.",
       "Return exactly these five labeled blocks:",
@@ -81,7 +77,7 @@ export default async function handler(req, res) {
       `Keywords: ${keywords || "(none)"}`
     ].join("\n");
 
-    const completion = await client.chat.completions.create({
+    const resp = await client.chat.completions.create({
       model: "gpt-4o-mini",
       temperature: 0.7,
       messages: [
@@ -90,14 +86,11 @@ export default async function handler(req, res) {
       ]
     });
 
-    const text = completion.choices?.[0]?.message?.content?.trim();
+    const text = resp.choices?.[0]?.message?.content?.trim();
     if (!text) throw new Error("Empty model response.");
-
-    return res.status(200).json({ result: text });
+    return res.status(200).json({ result: text, mode: "openai" });
   } catch (err) {
-    console.error("QuickSpin OpenAI error:", err?.message || err);
-    // Graceful fallback to stub so users still get something
-    const text = stubResult({ business, offer, tone, platform, keywords });
-    return res.status(200).json({ result: text, note: "fallback" });
+    console.error("OpenAI error:", err?.message || err);
+    return res.status(200).json({ result: stubResult({ business, offer, tone, platform, keywords }), mode: "fallback" });
   }
 }
